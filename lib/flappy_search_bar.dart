@@ -23,18 +23,11 @@ class SearchBarController<T> {
   final List<T> _list = [];
   final List<T> _filteredList = [];
   final List<T> _sortedList = [];
-  TextEditingController _searchQueryController;
   String _lastSearchedText;
   Future<List<T>> Function(String text) _lastSearchFunction;
   _ControllerListener _controllerListener;
   int Function(T a, T b) _lastSorting;
   CancelableOperation _cancelableOperation;
-  int minimumChars;
-
-  void setTextController(TextEditingController _searchQueryController, minimunChars) {
-    this._searchQueryController = _searchQueryController;
-    this.minimumChars = minimunChars;
-  }
 
   void setListener(_ControllerListener _controllerListener) {
     this._controllerListener = _controllerListener;
@@ -68,15 +61,7 @@ class SearchBarController<T> {
       _list.addAll(items);
       _controllerListener?.onListChanged(_list);
     } catch (error) {
-      _controllerListener?.onError(error);
-    }
-  }
-
-  void injectSearch(
-      String searchText, Future<List<T>> Function(String text) onSearch) {
-    if (searchText != null && searchText.length >= minimumChars) {
-      _searchQueryController.text = searchText;
-      _search(searchText, onSearch);
+      _controllerListener?.onError(null);
     }
   }
 
@@ -215,6 +200,10 @@ class SearchBar<T> extends StatefulWidget {
   /// Set a padding on the list
   final EdgeInsetsGeometry listPadding;
 
+  final searchQueryController;
+
+  final autoFocus;
+
   SearchBar({
     Key key,
     @required this.onSearch,
@@ -246,6 +235,8 @@ class SearchBar<T> extends StatefulWidget {
     this.listPadding = const EdgeInsets.all(0),
     this.searchBarPadding = const EdgeInsets.all(0),
     this.headerPadding = const EdgeInsets.all(0),
+    this.searchQueryController,
+    this.autoFocus = false
   }) : super(key: key);
 
   @override
@@ -256,11 +247,12 @@ class _SearchBarState<T> extends State<SearchBar<T>>
     with TickerProviderStateMixin, _ControllerListener<T> {
   bool _loading = false;
   Widget _error;
-  final _searchQueryController = TextEditingController();
+  TextEditingController _searchQueryController;
   Timer _debounce;
   bool _animate = false;
   List<T> _list = [];
   SearchBarController searchBarController;
+  String _oldQuery = "";
 
   @override
   void initState() {
@@ -268,7 +260,11 @@ class _SearchBarState<T> extends State<SearchBar<T>>
     searchBarController =
         widget.searchBarController ?? SearchBarController<T>();
     searchBarController.setListener(this);
-    searchBarController.setTextController(_searchQueryController, widget.minimumChars);
+    _searchQueryController =
+        widget.searchQueryController ?? TextEditingController();
+    _searchQueryController.addListener(() {
+      _onTextChanged(_searchQueryController.text.trim());
+    });
   }
 
   @override
@@ -302,6 +298,11 @@ class _SearchBarState<T> extends State<SearchBar<T>>
   }
 
   _onTextChanged(String newText) async {
+    if(newText == _oldQuery){
+      return;
+    }
+    _oldQuery = newText;
+    print("OnTextChanged");
     if (_debounce?.isActive ?? false) {
       _debounce.cancel();
     }
@@ -310,12 +311,15 @@ class _SearchBarState<T> extends State<SearchBar<T>>
       if (newText.length >= widget.minimumChars && widget.onSearch != null) {
         searchBarController._search(newText, widget.onSearch);
       } else {
-        setState(() {
-          _list.clear();
-          _error = null;
-          _loading = false;
-          _animate = false;
-        });
+        if(mounted){
+          setState(() {
+            _list.clear();
+            _error = null;
+            _loading = false;
+            _animate = false;
+          });
+        }
+
       }
     });
   }
@@ -333,6 +337,14 @@ class _SearchBarState<T> extends State<SearchBar<T>>
       _animate = false;
     });
   }
+  @override
+  void dispose() {
+    super.dispose();
+    if (_debounce?.isActive ?? false) {
+      _debounce.cancel();
+    }
+
+  }
 
   Widget _buildListView(
       List<T> items, Widget Function(T item, int index) builder) {
@@ -343,7 +355,7 @@ class _SearchBarState<T> extends State<SearchBar<T>>
         itemCount: items.length,
         shrinkWrap: widget.shrinkWrap,
         staggeredTileBuilder:
-            widget.indexedScaledTileBuilder ?? (int index) => ScaledTile.fit(1),
+        widget.indexedScaledTileBuilder ?? (int index) => ScaledTile.fit(1),
         scrollDirection: widget.scrollDirection,
         mainAxisSpacing: widget.mainAxisSpacing,
         crossAxisSpacing: widget.crossAxisSpacing,
@@ -374,76 +386,58 @@ class _SearchBarState<T> extends State<SearchBar<T>>
   @override
   Widget build(BuildContext context) {
     final widthMax = MediaQuery.of(context).size.width;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Padding(
-          padding: widget.searchBarPadding,
-          child: Container(
-            height: 80,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.start,
-              children: <Widget>[
-                Flexible(
-                  child: AnimatedContainer(
-                    duration: Duration(milliseconds: 200),
-                    width: _animate ? widthMax * .8 : widthMax,
-                    decoration: BoxDecoration(
-                      borderRadius: widget.searchBarStyle.borderRadius,
-                      color: widget.searchBarStyle.backgroundColor,
-                    ),
-                    child: Padding(
-                      padding: widget.searchBarStyle.padding,
-                      child: Theme(
-                        child: TextField(
-                          controller: _searchQueryController,
-                          onChanged: _onTextChanged,
-                          style: widget.textStyle,
-                          decoration: InputDecoration(
-                            icon: widget.icon,
-                            border: InputBorder.none,
-                            hintText: widget.hintText,
-                            hintStyle: widget.hintStyle,
-                          ),
-                        ),
-                        data: Theme.of(context).copyWith(
-                          primaryColor: widget.iconActiveColor,
-                        ),
-                      ),
-                    ),
-                  ),
+    return Scaffold(
+      appBar: AppBar(
+        title: AnimatedContainer(
+          duration: Duration(milliseconds: 200),
+          width: _animate ? widthMax * .8 : widthMax,
+          decoration: BoxDecoration(
+            borderRadius: widget.searchBarStyle.borderRadius,
+            color: widget.searchBarStyle.backgroundColor,
+          ),
+          child: Padding(
+            padding: widget.searchBarStyle.padding,
+            child: Theme(
+              child: TextField(
+                autofocus: widget.autoFocus,
+                controller: _searchQueryController,
+                style: widget.textStyle,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  hintText: widget.hintText,
+                  hintStyle: widget.hintStyle,
                 ),
-                GestureDetector(
-                  onTap: _cancel,
-                  child: AnimatedOpacity(
-                    opacity: _animate ? 1.0 : 0,
-                    curve: Curves.easeIn,
-                    duration: Duration(milliseconds: _animate ? 1000 : 0),
-                    child: AnimatedContainer(
-                      duration: Duration(milliseconds: 200),
-                      width:
-                          _animate ? MediaQuery.of(context).size.width * .2 : 0,
-                      child: Container(
-                        color: Colors.transparent,
-                        child: Center(
-                          child: widget.cancellationWidget,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
+              data: Theme.of(context).copyWith(
+                primaryColor: widget.iconActiveColor,
+              ),
             ),
           ),
         ),
-        Padding(
-          padding: widget.headerPadding,
-          child: widget.header ?? Container(),
-        ),
-        Expanded(
-          child: _buildContent(context),
-        ),
-      ],
+        actions: <Widget>[
+          GestureDetector(
+            child: _animate? widget.cancellationWidget : widget.icon,
+            onTap: (){
+              if(_animate){
+                _cancel();
+              }else if(_searchQueryController.text.isNotEmpty){
+                _onTextChanged(_searchQueryController.text);
+              }
+            },
+          )
+        ],
+      ),
+      body:Column(
+        children: <Widget>[
+          widget.header != null? Padding(
+            padding: widget.headerPadding,
+            child: widget.header,
+          ) : Container(),
+          Expanded(
+            child: _buildContent(context),
+          )
+        ],
+      )
     );
   }
 }
