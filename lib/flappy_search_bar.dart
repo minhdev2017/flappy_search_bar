@@ -388,6 +388,7 @@ class _SearchBarState<T> extends State<SearchBar<T>> with TickerProviderStateMix
                   autofocus: widget.autoFocus,
                   controller: _searchQueryController,
                   style: widget.textStyle,
+                  autocorrect: false,
                   decoration: InputDecoration(
                     border: InputBorder.none,
                     hintText: widget.hintText,
