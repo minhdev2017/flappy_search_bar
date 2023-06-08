@@ -6,6 +6,7 @@ import 'package:async/async.dart';
 import 'package:flappy_search_bar/scaled_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
+import 'package:pull_to_refresh/pull_to_refresh.dart';
 
 import 'search_bar_style.dart';
 
@@ -24,7 +25,7 @@ class SearchBarController<T> {
   final List<T> _filteredList = [];
   final List<T> _sortedList = [];
   String? _lastSearchedText;
-  Future<List<T>> Function(String text)? _lastSearchFunction;
+  Future<List<T>> Function(String text, int page)? _lastSearchFunction;
   _ControllerListener? _controllerListener;
   int Function(T a, T b)? _lastSorting;
   CancelableOperation? _cancelableOperation;
@@ -37,14 +38,14 @@ class SearchBarController<T> {
     _controllerListener?.onClear();
   }
 
-  void _search(String text, Future<List<T>> Function(String text) onSearch) async {
+  void _search(String text, Future<List<T>> Function(String text, int page) onSearch) async {
     _controllerListener?.onLoading();
     try {
       if (_cancelableOperation != null && (!_cancelableOperation!.isCompleted || !_cancelableOperation!.isCanceled)) {
         _cancelableOperation!.cancel();
       }
       _cancelableOperation = CancelableOperation.fromFuture(
-        onSearch(text),
+        onSearch(text, 1),
         onCancel: () => {},
       );
 
@@ -106,7 +107,7 @@ typedef ScaledTile IndexedScaledTileBuilder(int index);
 
 class SearchBar<T> extends StatefulWidget {
   /// Future returning searched items
-  final Future<List<T>> Function(String text) onSearch;
+  final Future<List<T>> Function(String text, int page) onSearch;
 
   /// List of items showed by default
   final List<T> suggestions;
@@ -245,7 +246,8 @@ class _SearchBarState<T> extends State<SearchBar<T>> with TickerProviderStateMix
   List<T> _list = [];
   SearchBarController? searchBarController;
   String _oldQuery = "";
-
+  int page = 1;
+  final RefreshController refreshController = RefreshController();
   @override
   void initState() {
     super.initState();
@@ -299,6 +301,8 @@ class _SearchBarState<T> extends State<SearchBar<T>> with TickerProviderStateMix
 
     _debounce = Timer(widget.debounceDuration, () async {
       if (newText.length >= widget.minimumChars && widget.onSearch != null) {
+        page = 1;
+        refreshController.loadComplete();
         searchBarController!._search(newText, widget.onSearch);
       } else {
         if (mounted) {
@@ -335,21 +339,39 @@ class _SearchBarState<T> extends State<SearchBar<T>> with TickerProviderStateMix
     }
   }
 
+  void _onLoading() async {
+    page++;
+    var loadMoreData = await widget.onSearch(_oldQuery, page);
+    if (loadMoreData.isEmpty) {
+      refreshController.loadNoData();
+    } else {
+      _list.addAll(loadMoreData);
+      if (mounted) setState(() {});
+      refreshController.loadComplete();
+    }
+  }
+
   Widget _buildListView(List<T> items, Widget Function(T item, int index) builder) {
     return Padding(
       padding: widget.listPadding,
-      child: StaggeredGridView.countBuilder(
-        crossAxisCount: widget.crossAxisCount,
-        itemCount: items.length,
-        shrinkWrap: widget.shrinkWrap,
-        staggeredTileBuilder: widget.indexedScaledTileBuilder ?? (int index) => ScaledTile.fit(1),
-        scrollDirection: widget.scrollDirection,
-        mainAxisSpacing: widget.mainAxisSpacing,
-        crossAxisSpacing: widget.crossAxisSpacing,
-        addAutomaticKeepAlives: true,
-        itemBuilder: (BuildContext context, int index) {
-          return builder(items[index], index);
-        },
+      child: SmartRefresher(
+        controller: refreshController,
+        enablePullUp: true,
+        enablePullDown: false,
+        onLoading: _onLoading,
+        child: StaggeredGridView.countBuilder(
+          crossAxisCount: widget.crossAxisCount,
+          itemCount: items.length,
+          shrinkWrap: widget.shrinkWrap,
+          staggeredTileBuilder: widget.indexedScaledTileBuilder ?? (int index) => ScaledTile.fit(1),
+          scrollDirection: widget.scrollDirection,
+          mainAxisSpacing: widget.mainAxisSpacing,
+          crossAxisSpacing: widget.crossAxisSpacing,
+          addAutomaticKeepAlives: true,
+          itemBuilder: (BuildContext context, int index) {
+            return builder(items[index], index);
+          },
+        ),
       ),
     );
   }
